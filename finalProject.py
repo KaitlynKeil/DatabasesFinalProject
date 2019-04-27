@@ -259,28 +259,33 @@ class Relation:
     p = self.product(rel)
     p = p.select(lam_fun)
     cols = p.columns()
-    cols = cols.remove(temp_col)
+    cols.remove(temp_col)
     return p.project(cols)
 
   def left_outer(self, rel, left_col, right_col, lam_fun):
-    left_cols = self.colums()
-    right_cols = rel.columns().remove(right_col)
+    left_cols = self.columns()
+    right_cols = list(rel.columns())
+    right_cols.remove(right_col)
     temp_cols = left_cols + right_cols
-    r = Relation(temp_cols, self.primary_key())
+    r = Relation(temp_cols, self.primary_key()+rel.primary_key())
 
     left_col_index = self.columns().index(left_col)
     right_col_index = rel.columns().index(right_col)
 
     for tup in self.tuples():
+      tup_seen = False
       for rtup in rel.tuples():
         if lam_fun(tup[left_col_index], rtup[right_col_index]):
+          tup_seen = True
           temp_list = list(rtup)
           temp_list.pop(right_col_index)
           temp_tup = tuple(temp_list)
+          print(r.columns())
+          print(tup)
+          print(temp_tup)
           r.create_tuple(tup+temp_tup)
-          break
-
-      r.create_tuple(tup + tuple([None]*len(right_cols)))
+      if not tup_seen:
+        r.create_tuple(tup + tuple([None]*len(right_cols)))
 
     return r
 
@@ -290,8 +295,9 @@ class Relation:
     
 
   def full_outer(self, rel, left_col, right_col, lam_fun):
-    left_cols = self.colums()
-    right_cols = rel.columns().remove(right_col)
+    left_cols = self.columns()
+    right_cols = list(rel.columns())
+    right_cols.remove(right_col)
     temp_cols = left_cols + right_cols
     r = Relation(temp_cols, self.primary_key() + rel.primary_key())
 
@@ -299,21 +305,27 @@ class Relation:
     right_col_index = rel.columns().index(right_col)
 
     temp_rtup = copy(rel.tuples())
+    seen_rtups = set()
 
     for tup in self.tuples():
+      tup_seen = False
       for rtup in temp_rtup:
         if lam_fun(tup[left_col_index], rtup[right_col_index]):
+          tup_seen = True
           temp_list = list(rtup)
           temp_list.pop(right_col_index)
           temp_tup = tuple(temp_list)
           r.create_tuple(tup+temp_tup)
-          temp_rtup.remove(rtup)
-          break
-
-      r.create_tuple(tup + tuple([None]*len(right_cols)))
+          seen_rtups.add(rtup)
+      if not tup_seen:
+        r.create_tuple(tup + tuple([None]*len(right_cols)))
 
     for rtup in temp_rtup:
-      r.create_tuple(tuple([None]*len(left_cols)) + rtup)
+      if rtup not in seen_rtups:
+        temp_list = list(rtup)
+        temp_list.pop(right_col_index)
+        temp_tup = tuple(temp_list)
+        r.create_tuple(tuple([None]*len(left_cols)) + temp_tup)
 
     return r
 
@@ -367,7 +379,7 @@ AUTHORED_BY = Relation(["isbn","lastName"],
                ( "0060558121" , "Gaiman" ),
                ( "0062255655" , "Gaiman" ),
                ( "0060853980" , "Gaiman" ),
-               ( "0060853980" , "Pratchett" ),
+               ( "0060853981" , "Pratchett" ),
                ( "0307274939" , "Keegan" ),
                ( "0712666451" , "Keegan" ),
                ( "1101972120" , "Chiang" ),
@@ -421,11 +433,6 @@ def evaluate_query_aggr (query):
   res = evaluate_query(subquery)
 
   return res.aggregate(query['select-aggr'])
-
-
-def evaluate_query_aggr_group (query):
-  # we are a smol group and do not have aggr group
-  pass
 
 import pyparsing as pp
 
@@ -523,5 +530,28 @@ def shell (db):
       print("Error: " + e)
 
 if __name__ == '__main__':
-  shell(sample_db)
+
+  # thing1 = PERSONS.left_outer(AUTHORED_BY, 'lastName', 'lastName', lambda x,y: x==y)
+  # thing2 = PERSONS.left_outer(AUTHORED_BY, 'lastName', 'lastName', lambda x,y: x==y)
+  # print(thing1)
+  # print(thing2)
+
+  CUSTOMERS = Relation(['CustomerID', 'CustomerName', 'ContactName', 'Address', 'City',  'PostalCode',  'Country'],
+                       ['CustomerID'],
+                       [
+                       ('1', 'Alfreds Futterkiste', 'Maria Anders',  'Obere Str. 57', 'Berlin', '12209', 'Germany'),
+                       ('2', 'Ana Trujillo Emparedados y helados',  'Ana Trujillo',  'Avda. de la Constitucion 2222', 'Mexico D.F.', '05021', 'Mexico'),
+                       ('3', 'Antonio Moreno Taqueria', 'Antonio Moreno',  'Mataderos 2312',  'Mexico D.F.', '05023', 'Mexico')])
+
+  ORDERS = Relation(['OrderID', 'CustomerID',  'EmployeeID',  'OrderDate', 'ShipperID'],
+                    ['OrderID'],
+                    [("10308", "2", "7", "1996-09-18", "3"),("10309", "37", "3", "1996-09-19", "1"),("10310","77","8","1996-09-20", "2")])
+
+  thing3 = BOOKS.full_outer(AUTHORED_BY, 'isbn', 'isbn', lambda x,y: x==y)
+  print(thing3)
+
+
+
+
+  # shell(sample_db)
   # print(convert_abstract_query(sample_db,{ "select": ["a.lastName", "b.title"], "from": [ ("Books","b"), ("AuthoredBy","a") ], "where": [ ("n=n", "b.isbn", "a.isbn"), ("n=v", "a.lastName", "Gaiman")] }))
