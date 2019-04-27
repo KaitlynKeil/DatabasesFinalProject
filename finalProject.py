@@ -254,11 +254,13 @@ class Relation:
     return self.product(rel)
 
   def inner_join(self, rel, left_col, right_col, lam_fun):
-    temp_col = "r." + right_col
-    rel = rel.rename([(left_col, temp_col)])
+    temp_col = right_col
+    rel = rel.rename([(right_col, temp_col)])
     p = self.product(rel)
-    p = p.select(lam_fun)
-    cols = p.columns()
+    lam = lambda x: lam_fun(x[left_col], x[right_col])
+    p = p.select(lam)
+    cols = list(p.columns())
+
     cols.remove(temp_col)
     return p.project(cols)
 
@@ -267,7 +269,9 @@ class Relation:
     right_cols = list(rel.columns())
     right_cols.remove(right_col)
     temp_cols = left_cols + right_cols
-    r = Relation(temp_cols, self.primary_key()+rel.primary_key())
+    rel_primary = list(rel.primary_key())
+    rel_primary.remove(right_col)
+    r = Relation(temp_cols, self.primary_key()+rel_primary)
 
     left_col_index = self.columns().index(left_col)
     right_col_index = rel.columns().index(right_col)
@@ -280,9 +284,6 @@ class Relation:
           temp_list = list(rtup)
           temp_list.pop(right_col_index)
           temp_tup = tuple(temp_list)
-          print(r.columns())
-          print(tup)
-          print(temp_tup)
           r.create_tuple(tup+temp_tup)
       if not tup_seen:
         r.create_tuple(tup + tuple([None]*len(right_cols)))
@@ -292,14 +293,19 @@ class Relation:
 
   def right_outer(self, rel, left_col, right_col, lam_fun):
     return rel.left_outer(self, right_col, left_col, lam_fun)
-    
+
 
   def full_outer(self, rel, left_col, right_col, lam_fun):
     left_cols = self.columns()
     right_cols = list(rel.columns())
     right_cols.remove(right_col)
     temp_cols = left_cols + right_cols
-    r = Relation(temp_cols, self.primary_key() + rel.primary_key())
+    rel_primary = list(rel.primary_key())
+    rel_primary.remove(right_col)
+
+    print(self.primary_key())
+    print(rel_primary)
+    r = Relation(temp_cols, self.primary_key()+rel_primary)
 
     left_col_index = self.columns().index(left_col)
     right_col_index = rel.columns().index(right_col)
@@ -323,9 +329,9 @@ class Relation:
     for rtup in temp_rtup:
       if rtup not in seen_rtups:
         temp_list = list(rtup)
-        temp_list.pop(right_col_index)
+        # temp_list.pop(right_col_index)
         temp_tup = tuple(temp_list)
-        r.create_tuple(tuple([None]*len(left_cols)) + temp_tup)
+        r.create_tuple(tuple([None]*(len(left_cols)-1)) + temp_tup)
 
     return r
 
@@ -340,8 +346,8 @@ BOOKS = Relation(["title","year","numberPages","isbn"],
             ( "American Gods", 2003, 591, "0060558121"),
             ( "The Ocean at the End of the Lane", 2013, 181, "0062255655"),
             ( "Good Omens", 1990, 432, "0060853980"),
-            ( "The American Civil War", 2009, 396, "0307274939"),
-            ( "The First World War", 1999, 500, "0712666451"),
+            # ( "The American Civil War", 2009, 396, "0307274939"),
+            # ( "The First World War", 1999, 500, "0712666451"),
             ( "The Kidnapping of Edgardo Mortara", 1997, 350, "0679768173"),
             ( "The Fortress of Solitude", 2003, 509, "0375724886"),
             ( "The Wall of the Sky, The Wall of the Eye", 1996, 232, "0571205992"),
@@ -386,8 +392,8 @@ AUTHORED_BY = Relation(["isbn","lastName"],
                ( "0679768173" , "Kertzer" ),
                ( "0812980660" , "MacMillan" ),
                ( "0571205992" , "Lethem" ),
-               ( "0375724886" , "Lethem" ),
-               ( "0387977102" , "Mac Lane" ),
+               # ( "0375724886" , "Lethem" ),
+               # ( "0387977102" , "Mac Lane" ),
                ( "0387977102" , "Moerdijk" ),
                ( "0387984032" , "Mac Lane" ),
                ( "0060175400" , "Kingsolver")
@@ -410,19 +416,21 @@ def evaluate_query (query):
       totalProduct=totalProduct.product(relation)
 
   if query['join']:
-    on_tup = query['on']
-    if on_tup[0] == 'n=n':
-      left_col = on_tup[1]
-      right_col = on_tup[2]
-      l = lambda t: t[left_col]==t[right_col]
-    elif on_tup[0] == 'n>n':
-      left_col = on_tup[1]
-      right_col = on_tup[2]
-      l = lambda t: t[left_col]>t[right_col]
-    elif on_tup[0] == 'n<n':
-      left_col = on_tup[1]
-      right_col = on_tup[2]
-      l = lambda t: t[left_col]<t[right_col]
+    on_tup = query.get('on',[None])[0]
+    print(on_tup)
+    if on_tup:
+      if on_tup[0] == 'n=n':
+        left_col = on_tup[1]
+        right_col = on_tup[2]
+        l = lambda t,y: t==y
+      elif on_tup[0] == 'n>n':
+        left_col = on_tup[1]
+        right_col = on_tup[2]
+        l = lambda t,y: t>y
+      elif on_tup[0] == 'n<n':
+        left_col = on_tup[1]
+        right_col = on_tup[2]
+        l = lambda t,y: t<y
 
     join_list = query['join']
     nicknameDict = {}
@@ -441,7 +449,7 @@ def evaluate_query (query):
         totalProduct = totalProduct.inner_join(relation, left_col, right_col, l)
       elif join_type == 'cross':
         totalProduct = totalProduct.cross_join(relation)
-
+  print(totalProduct)
 
   whereList = query['where']
   for item in whereList:
@@ -462,10 +470,7 @@ def evaluate_query_aggr (query):
   subquery = {}
   subquery['select'] = [tup[2] for tup in query['select-aggr']]
   subquery['from'] = query['from']
-  if query['where']:
-    subquery['where'] = query['where']
-  else:
-    subquery['where'] = []
+  subquery['where'] = query['where']
 
   if query['join']:
     subquery['join'] = query['join']
@@ -482,21 +487,28 @@ if __name__ == '__main__':
   # print(thing1)
   # print(thing2)
 
-  CUSTOMERS = Relation(['CustomerID', 'CustomerName', 'ContactName', 'Address', 'City',  'PostalCode',  'Country'],
-                       ['CustomerID'],
-                       [
-                       ('1', 'Alfreds Futterkiste', 'Maria Anders',  'Obere Str. 57', 'Berlin', '12209', 'Germany'),
-                       ('2', 'Ana Trujillo Emparedados y helados',  'Ana Trujillo',  'Avda. de la Constitucion 2222', 'Mexico D.F.', '05021', 'Mexico'),
-                       ('3', 'Antonio Moreno Taqueria', 'Antonio Moreno',  'Mataderos 2312',  'Mexico D.F.', '05023', 'Mexico')])
+  # CUSTOMERS = Relation(['CustomerID', 'CustomerName', 'ContactName', 'Address', 'City',  'PostalCode',  'Country'],
+  #                      ['CustomerID'],
+  #                      [
+  #                      ('1', 'Alfreds Futterkiste', 'Maria Anders',  'Obere Str. 57', 'Berlin', '12209', 'Germany'),
+  #                      ('2', 'Ana Trujillo Emparedados y helados',  'Ana Trujillo',  'Avda. de la Constitucion 2222', 'Mexico D.F.', '05021', 'Mexico'),
+  #                      ('3', 'Antonio Moreno Taqueria', 'Antonio Moreno',  'Mataderos 2312',  'Mexico D.F.', '05023', 'Mexico')])
 
-  ORDERS = Relation(['OrderID', 'CustomerID',  'EmployeeID',  'OrderDate', 'ShipperID'],
-                    ['OrderID'],
-                    [("10308", "2", "7", "1996-09-18", "3"),("10309", "37", "3", "1996-09-19", "1"),("10310","77","8","1996-09-20", "2")])
+  # ORDERS = Relation(['OrderID', 'CustomerID',  'EmployeeID',  'OrderDate', 'ShipperID'],
+  #                   ['OrderID'],
+  #                   [("10308", "2", "7", "1996-09-18", "3"),("10309", "37", "3", "1996-09-19", "1"),("10310","77","8","1996-09-20", "2")])
 
-  thing3 = BOOKS.full_outer(AUTHORED_BY, 'isbn', 'isbn', lambda x,y: x==y)
-  print(thing3)
+  # thing3 = BOOKS.full_outer(AUTHORED_BY, 'isbn', 'isbn', lambda x,y: x==y)
+  # print(thing3)
 
-
+  query = {
+  "select": ["a.lastName", "b.title"],
+  "from": [ (BOOKS,"b")],
+  "join": [ ('full',AUTHORED_BY, 'a')],
+  "on": [ ("n=n", "b.isbn", "a.isbn")],
+  "where": [ ]
+  }
+  print(evaluate_query(query))
 
 
   # shell(sample_db)
