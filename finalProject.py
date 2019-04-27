@@ -253,9 +253,9 @@ class Relation:
   def cross_join(self, rel):
     return self.product(rel)
 
-  def inner_join(self, rel, col, lam_fun):
-    temp_col = "r." + col
-    rel = rel.rename([(col, temp_col)])
+  def inner_join(self, rel, left_col, right_col, lam_fun):
+    temp_col = "r." + right_col
+    rel = rel.rename([(left_col, temp_col)])
     p = self.product(rel)
     p = p.select(lam_fun)
     cols = p.columns()
@@ -409,6 +409,39 @@ def evaluate_query (query):
     for relation, nickname in relationList[1:]:
       totalProduct=totalProduct.product(relation)
 
+  if query['join']:
+    on_tup = query['on']
+    if on_tup[0] == 'n=n':
+      left_col = on_tup[1]
+      right_col = on_tup[2]
+      l = lambda t: t[left_col]==t[right_col]
+    elif on_tup[0] == 'n>n':
+      left_col = on_tup[1]
+      right_col = on_tup[2]
+      l = lambda t: t[left_col]>t[right_col]
+    elif on_tup[0] == 'n<n':
+      left_col = on_tup[1]
+      right_col = on_tup[2]
+      l = lambda t: t[left_col]<t[right_col]
+
+    join_list = query['join']
+    nicknameDict = {}
+    for join_type,relation,nickname in join_list:
+      nicknameDict[nickname] = relation
+      for column in relation.columns():
+        if not nickname+'.' in column:
+          relation.rename([(column, nickname+'.'+column)])
+      if join_type == 'left':
+        totalProduct = totalProduct.left_outer(relation, left_col, right_col, l)
+      elif join_type == 'right':
+        totalProduct = totalProduct.right_outer(relation, left_col, right_col, l)
+      elif join_type == 'full':
+        totalProduct = totalProduct.full_outer(relation, left_col, right_col, l)
+      elif join_type == 'inner':
+        totalProduct = totalProduct.inner_join(relation, left_col, right_col, l)
+      elif join_type == 'cross':
+        totalProduct = totalProduct.cross_join(relation)
+
 
   whereList = query['where']
   for item in whereList:
@@ -429,105 +462,18 @@ def evaluate_query_aggr (query):
   subquery = {}
   subquery['select'] = [tup[2] for tup in query['select-aggr']]
   subquery['from'] = query['from']
-  subquery['where'] = query['where']
+  if query['where']:
+    subquery['where'] = query['where']
+  else:
+    subquery['where'] = []
+
+  if query['join']:
+    subquery['join'] = query['join']
+    subquery['on'] = query['on']
+
   res = evaluate_query(subquery)
 
   return res.aggregate(query['select-aggr'])
-
-import pyparsing as pp
-
-
-def parseQuery (input):
-
-    # parse a string into an abstract query
-
-    # <sql> ::= select <columns> from <tables> (where <conditions>)?
-
-    idChars = pp.alphas+"_*"
-
-    pIDENTIFIER = pp.Word(idChars, idChars+"0123456789.")
-    pIDENTIFIER.setParseAction(lambda result: result[0])
-
-    pCOMMAIDENT = pp.Suppress(pp.Word(",")) + pIDENTIFIER
-
-    pIDENTIFIER2 = pp.Group(pIDENTIFIER + pIDENTIFIER)
-
-    pCOMMAIDENT2 = pp.Suppress(pp.Word(",")) + pIDENTIFIER2
-
-    pINTEGER = pp.Word("-0123456789","0123456789")
-    pINTEGER.setParseAction(lambda result: int(result[0]))
-
-    pSTRING = pp.QuotedString("'")
-
-    pKEYWORD = lambda w : pp.Suppress(pp.Keyword(w))
-
-    pSELECT = pKEYWORD("select") + pp.Group(pIDENTIFIER + pp.ZeroOrMore( pCOMMAIDENT))
-
-    pFROM = pKEYWORD("from") + pp.Group(pIDENTIFIER2 + pp.ZeroOrMore( pCOMMAIDENT2))
-
-    pCONDITION_NEQN = pIDENTIFIER + pp.Word("=") + pIDENTIFIER
-    pCONDITION_NEQN.setParseAction(lambda result: ("n=n",result[0],result[2]))
-
-    pCONDITION_NEQV1 = pIDENTIFIER + pp.Word("=") + pINTEGER
-    pCONDITION_NEQV1.setParseAction(lambda result: ("n=v",result[0],result[2]))
-
-    pCONDITION_NEQV2 = pIDENTIFIER + pp.Word("=") + pSTRING
-    pCONDITION_NEQV2.setParseAction(lambda result: ("n=v",result[0],result[2]))
-
-    pCONDITION_NGEV = pIDENTIFIER + pp.Word(">") + pINTEGER
-    pCONDITION_NGEV.setParseAction(lambda result: ("n>v",result[0],result[2]))
-
-    pCONDITION = pCONDITION_NEQV1 | pCONDITION_NEQV2 | pCONDITION_NEQN | pCONDITION_NGEV
-
-    pANDCONDITION = pKEYWORD("and") + pCONDITION
-
-    pCONDITIONS = pp.Group(pCONDITION + pp.ZeroOrMore( pANDCONDITION))
-
-    pWHERE = pp.Optional(pKEYWORD("where") + pCONDITIONS )
-
-    pSQL = pSELECT + pFROM + pWHERE + pp.StringEnd()
-    pSQL.setParseAction(lambda result: { "select": result[0].asList(),
-                                         "from": result[1].asList(),
-                                         "where": result[2].asList() if len(result)>2 else []})
-
-
-    result = pSQL.parseString(input)[0]
-    return result    # the first element of the result is the expression
-
-
-sample_db = {
-    "Books": BOOKS,
-    "Persons": PERSONS,
-    "AuthoredBy": AUTHORED_BY
-}
-
-
-
-def convert_abstract_query (db,aq):
-  aq['from'] = [(db[tup[0]], tup[1]) for tup in aq['from']]
-  return aq
-
-def shell (db):
-  print("Available tables:")
-  for key in db:
-    print('\t'+key)
-  while True:
-    try:
-      newRelName = None
-      x = input("> ")
-      if x == 'quit':
-        break
-      if ':' in x:
-        [newRelName, x] = x.split(':')
-      y = parseQuery(x)
-      y = convert_abstract_query(db, y)
-      evaled = evaluate_query(y)
-      print(evaled)
-      if newRelName:
-        db[newRelName] = evaled
-        print("Relation {} created".format(newRelName))
-    except Exception as e:
-      print("Error: " + e)
 
 if __name__ == '__main__':
 
