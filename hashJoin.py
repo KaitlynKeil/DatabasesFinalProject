@@ -1,29 +1,20 @@
 ######################################################################
 #
-# HOMEWORK 3
+# Final Project
 #
-# Due: Sun 3/17/19 23h59.
+# Due: Sat 5/11/19 12h00.
 #
 # Name: Paige and Kaitlyn
 #
 # Email:  kaitlyn.keil@students.olin.edu, paige.pfenninger@students.olin.edu
 #
-# Remarks, if any:
-#
+# This implementation uses a Hash Table when possible in order to join
+#  two tables.
+#  If an equi join is being used, the tables are joined using a hash join.
+#  Otherwise, the nested loop method is used.
 #
 ######################################################################
 
-
-######################################################################
-#
-# Python 3 code
-#
-# Please fill in this file with your solutions and submit it
-#
-# The functions below are stubs that you should replace with your
-# own implementation.
-#
-######################################################################
 import sys
 from copy import copy
 
@@ -254,23 +245,44 @@ class Relation:
     return self.product(rel)
 
   def inner_join(self, rel, left_col, right_col, lam_fun):
-    temp_col = right_col
-    rel = rel.rename([(right_col, temp_col)])
-    p = self.product(rel)
-    lam = lambda x: lam_fun(x[left_col], x[right_col])
-    p = p.select(lam)
-    cols = list(p.columns())
+    left_cols = self.columns()
+    right_cols = list(rel.columns())
+    temp_cols = left_cols + right_cols
+    rel_primary = list(rel.primary_key())
+    r = Relation(temp_cols, self.primary_key()+rel_primary)
 
-    cols.remove(temp_col)
-    return p.project(cols)
+    left_col_index = self.columns().index(left_col)
+    right_col_index = rel.columns().index(right_col)
+
+    for tup in self.tuples():
+      for rtup in rel.tuples():
+        if lam_fun(tup[left_col_index], rtup[right_col_index]):
+          r.create_tuple(tup+rtup)
+
+    return r
+
+  def inner_hash(self, rel, left_col, right_col):
+    right_cols = list(rel.columns())
+    temp_cols = self.columns() + right_cols
+    rel_primary = list(rel.primary_key())
+    r = Relation(temp_cols, self.primary_key()+rel_primary)
+
+    joinHash = make_hash(rel, right_col)
+    i = self.columns().index(left_col)
+
+    for tup in self.tuples():
+      joinkey = tup[i]
+      if joinkey in joinHash:
+        for tup2 in joinHash[joinkey]:
+          r.create_tuple(tup+tup2)
+
+    return r
 
   def left_outer(self, rel, left_col, right_col, lam_fun):
     left_cols = self.columns()
     right_cols = list(rel.columns())
-    right_cols.remove(right_col)
     temp_cols = left_cols + right_cols
     rel_primary = list(rel.primary_key())
-    rel_primary.remove(right_col)
     r = Relation(temp_cols, self.primary_key()+rel_primary)
 
     left_col_index = self.columns().index(left_col)
@@ -290,21 +302,38 @@ class Relation:
 
     return r
 
+  def left_outer_hash(self, rel, left_col, right_col):
+    right_cols = list(rel.columns())
+    temp_cols = self.columns() + right_cols
+    rel_primary = list(rel.primary_key())
+    r = Relation(temp_cols, self.primary_key()+rel_primary)
+
+    joinHash = make_hash(rel, right_col)
+    i = self.columns().index(left_col)
+
+    for tup in self.tuples():
+      joinkey = tup[i]
+      if joinkey in joinHash:
+        for tup2 in joinHash[joinkey]:
+          r.create_tuple(tup+tup2)
+      else:
+        r.create_tuple(tup + tuple([None]*len(right_cols)))
+
+    return r
+
 
   def right_outer(self, rel, left_col, right_col, lam_fun):
     return rel.left_outer(self, right_col, left_col, lam_fun)
+
+  def right_outer_hash(self, rel, left_col, right_col):
+    return rel.left_outer_hash(self, right_col, left_col)
 
 
   def full_outer(self, rel, left_col, right_col, lam_fun):
     left_cols = self.columns()
     right_cols = list(rel.columns())
-    right_cols.remove(right_col)
     temp_cols = left_cols + right_cols
     rel_primary = list(rel.primary_key())
-    rel_primary.remove(right_col)
-
-    print(self.primary_key())
-    print(rel_primary)
     r = Relation(temp_cols, self.primary_key()+rel_primary)
 
     left_col_index = self.columns().index(left_col)
@@ -319,7 +348,6 @@ class Relation:
         if lam_fun(tup[left_col_index], rtup[right_col_index]):
           tup_seen = True
           temp_list = list(rtup)
-          temp_list.pop(right_col_index)
           temp_tup = tuple(temp_list)
           r.create_tuple(tup+temp_tup)
           seen_rtups.add(rtup)
@@ -329,13 +357,37 @@ class Relation:
     for rtup in temp_rtup:
       if rtup not in seen_rtups:
         temp_list = list(rtup)
-        # temp_list.pop(right_col_index)
         temp_tup = tuple(temp_list)
-        r.create_tuple(tuple([None]*(len(left_cols)-1)) + temp_tup)
+        r.create_tuple(tuple([None]*(len(left_cols))) + temp_tup)
 
     return r
 
+  def full_outer_hash(self, rel, left_col, right_col):
+    left_cols = self.columns()
+    right_cols = list(rel.columns())
+    temp_cols = left_cols + right_cols
+    rel_primary = list(rel.primary_key())
+    r = Relation(temp_cols, self.primary_key()+rel_primary)
 
+    i = self.columns().index(left_col)
+
+    joinHash = make_hash(rel, right_col)
+
+    for tup in self.tuples():
+      joinkey = tup[i]
+      if joinkey in joinHash:
+        for tup2 in joinHash[joinkey]:
+          r.create_tuple(tup+tup2)
+        joinHash.pop(joinkey)
+      else:
+        r.create_tuple(tup + tuple([None]*len(right_cols)))
+
+    for joinkey, tuplist in joinHash.items():
+      for tup in tuplist:
+        temp = (None,) * len(left_cols) + tup
+      r.create_tuple(temp)
+
+    return r
 
 BOOKS = Relation(["title","year","numberPages","isbn"],
           ["isbn"],
@@ -399,7 +451,19 @@ AUTHORED_BY = Relation(["isbn","lastName"],
                ( "0060175400" , "Kingsolver")
              ])
 
-
+def make_hash(rel, joinAttr):
+  """ Given a relation and the join attribute,
+  creates a hash table of that attribute
+  pointing to a list of all the tuples (minus
+  the attribute) that match.
+  """
+  joinHash = {}
+  i = rel.columns().index(joinAttr)
+  for tup in rel.tuples():
+    joinkey = tup[i]
+    joinHash[joinkey] = joinHash.get(joinkey, [])
+    joinHash[joinkey].append(tup)
+  return joinHash
 
 def evaluate_query (query):
   relationList = query['from']
@@ -416,12 +480,13 @@ def evaluate_query (query):
       totalProduct=totalProduct.product(relation)
 
   if query['join']:
+    isEqui = False
     on_tup = query.get('on',[None])[0]
-    print(on_tup)
     if on_tup:
       if on_tup[0] == 'n=n':
         left_col = on_tup[1]
         right_col = on_tup[2]
+        isEqui = True
         l = lambda t,y: t==y
       elif on_tup[0] == 'n>n':
         left_col = on_tup[1]
@@ -440,16 +505,27 @@ def evaluate_query (query):
         if not nickname+'.' in column:
           relation.rename([(column, nickname+'.'+column)])
       if join_type == 'left':
-        totalProduct = totalProduct.left_outer(relation, left_col, right_col, l)
+        if isEqui:
+          totalProduct = totalProduct.left_outer_hash(relation, left_col, right_col)
+        else:
+          totalProduct = totalProduct.left_outer(relation, left_col, right_col, l)
       elif join_type == 'right':
-        totalProduct = totalProduct.right_outer(relation, left_col, right_col, l)
+        if isEqui:
+          totalProduct = totalProduct.right_outer_hash(relation, left_col, right_col)
+        else:
+          totalProduct = totalProduct.right_outer(relation, left_col, right_col, l)
       elif join_type == 'full':
-        totalProduct = totalProduct.full_outer(relation, left_col, right_col, l)
+        if isEqui:
+          totalProduct = totalProduct.full_outer_hash(relation, left_col, right_col)
+        else:
+          totalProduct = totalProduct.full_outer(relation, left_col, right_col, l)
       elif join_type == 'inner':
-        totalProduct = totalProduct.inner_join(relation, left_col, right_col, l)
+        if isEqui:
+          totalProduct = totalProduct.inner_hash(relation, left_col, right_col)
+        else:
+          totalProduct = totalProduct.inner_join(relation, left_col, right_col, l)
       elif join_type == 'cross':
         totalProduct = totalProduct.cross_join(relation)
-  print(totalProduct)
 
   whereList = query['where']
   for item in whereList:
@@ -481,35 +557,11 @@ def evaluate_query_aggr (query):
   return res.aggregate(query['select-aggr'])
 
 if __name__ == '__main__':
-
-  # thing1 = PERSONS.left_outer(AUTHORED_BY, 'lastName', 'lastName', lambda x,y: x==y)
-  # thing2 = PERSONS.left_outer(AUTHORED_BY, 'lastName', 'lastName', lambda x,y: x==y)
-  # print(thing1)
-  # print(thing2)
-
-  # CUSTOMERS = Relation(['CustomerID', 'CustomerName', 'ContactName', 'Address', 'City',  'PostalCode',  'Country'],
-  #                      ['CustomerID'],
-  #                      [
-  #                      ('1', 'Alfreds Futterkiste', 'Maria Anders',  'Obere Str. 57', 'Berlin', '12209', 'Germany'),
-  #                      ('2', 'Ana Trujillo Emparedados y helados',  'Ana Trujillo',  'Avda. de la Constitucion 2222', 'Mexico D.F.', '05021', 'Mexico'),
-  #                      ('3', 'Antonio Moreno Taqueria', 'Antonio Moreno',  'Mataderos 2312',  'Mexico D.F.', '05023', 'Mexico')])
-
-  # ORDERS = Relation(['OrderID', 'CustomerID',  'EmployeeID',  'OrderDate', 'ShipperID'],
-  #                   ['OrderID'],
-  #                   [("10308", "2", "7", "1996-09-18", "3"),("10309", "37", "3", "1996-09-19", "1"),("10310","77","8","1996-09-20", "2")])
-
-  # thing3 = BOOKS.full_outer(AUTHORED_BY, 'isbn', 'isbn', lambda x,y: x==y)
-  # print(thing3)
-
   query = {
   "select": ["a.lastName", "b.title"],
   "from": [ (BOOKS,"b")],
-  "join": [ ('full',AUTHORED_BY, 'a')],
+  "join": [ ('inner',AUTHORED_BY, 'a')],
   "on": [ ("n=n", "b.isbn", "a.isbn")],
   "where": [ ]
   }
   print(evaluate_query(query))
-
-
-  # shell(sample_db)
-  # print(convert_abstract_query(sample_db,{ "select": ["a.lastName", "b.title"], "from": [ ("Books","b"), ("AuthoredBy","a") ], "where": [ ("n=n", "b.isbn", "a.isbn"), ("n=v", "a.lastName", "Gaiman")] }))
